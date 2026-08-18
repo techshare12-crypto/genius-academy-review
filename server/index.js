@@ -1,16 +1,16 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import crypto from 'node:crypto';
+import path from 'path';
+import fs from 'fs';
 import { isValidCourse, COURSES_LIST } from './courseConfig.js';
 import { generateUniqueReview } from './geminiService.js';
 import { getTotalGeneratedCount, savePrivateFeedback, updateReviewStatus, isSupabaseActive } from './db.js';
 
-// Load environment variables
-dotenv.config();
-
 const app = express();
 const PORT = process.env.PORT || 3001;
+const distPath = path.resolve('dist');
 
 // Middleware
 app.use(cors());
@@ -23,6 +23,11 @@ app.use((err, req, res, next) => {
   }
   next();
 });
+
+// Serve static assets from Vite production build if dist directory exists
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+}
 
 /**
  * GET /api/health
@@ -194,13 +199,29 @@ app.post('/api/analytics', async (req, res) => {
   res.status(200).json({ received: true });
 });
 
+/**
+ * Catch-all SPA Fallback Route
+ * Serves index.html from dist for any non-API client-side route (/review, /completion, etc.)
+ */
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    return next();
+  }
+  const indexPath = path.join(distPath, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    return res.sendFile(indexPath);
+  }
+  return res.status(404).send('Frontend not built. Please run `npm run build` before starting the production server.');
+});
+
 // Start Server
 app.listen(PORT, () => {
   const geminiConfigured = !!((process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== '') || (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim() !== ''));
   console.log(`\n==================================================`);
-  console.log(` GENIUS ACADEMY REVIEW ASSISTANT BACKEND`);
+  console.log(` GENIUS ACADEMY REVIEW ASSISTANT PRODUCTION SERVER`);
   console.log(` Server running on http://localhost:${PORT}`);
   console.log(` Database: ${isSupabaseActive ? 'Supabase Connected' : 'SQLite Persistent (server/data/reviews.db)'}`);
+  console.log(` Static Frontend: ${fs.existsSync(distPath) ? 'Serving from dist/' : 'Not built yet'}`);
   console.log(` Global Uniqueness: Active (Threshold: ${process.env.REVIEW_SIMILARITY_THRESHOLD || '0.70'})`);
   console.log(` Gemini Configured: ${geminiConfigured ? 'YES' : 'NO (Using pre-verified fallbacks)'}`);
   console.log(` Gemini Model: ${process.env.GEMINI_MODEL || 'gemini-3.6-flash'}`);
